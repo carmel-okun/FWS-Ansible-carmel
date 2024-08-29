@@ -1,0 +1,51 @@
+---
+- name: manage ec2 instances
+  hosts: ec2instances
+  tasks:
+    - name: Gather information about carmel's instances
+      amazon.aws.ec2_instance_info:
+        access_key: {{ access_key }}
+        secret_key: {{ sercret_key }}
+        region: us-east-1
+        filters:
+          tag:carmel: yes
+          tag:Managed: true
+      register: instances_info
+
+    - name: print instance_info
+      ansible.builtin.debug:
+        msg: "{{ instances_info.instances | map(attribute='instance_id') | list }}"
+
+    - name: gather each instance tags
+      amazon.aws.ec2_tag_info:
+        access_key: {{ access_key }}
+        secret_key: {{ sercret_key }}
+        region: us-east-1
+        resource: {{ item }}
+      loop:
+        {{ instances_info.instances | map(attribute='instance_id') | list }}
+      register: instance_tags
+
+    - name: Set the hostname according to tag
+      ansible.builtin.hostname:
+        name: {{ instance_tags.tags[Name] }}
+
+    - name: Ensure the correct Service is installed
+      ansible.builtin.apt:
+        name: {{ instance_tags.tags[Service] }}={{ instance_tags.tags[Version] }}
+        state: present
+        update_cache: yes
+
+    - name: Ensure the Service is started and enabled
+      service:
+        name: {{ instance_tags.tags[Service] }}={{ instance_tags.tags[Version] }}
+        state: started
+        enabled: yes
+
+    - name: Restart each server according to the time specified in tags
+      cron:
+        name: "Run restart"
+        weekday: {{ instance_tags.tags[Restart][0] }}
+        hour: {{ instance_tags.tags[Restart][1] }}
+        job: "systemctl restart"
+        user: "root"
